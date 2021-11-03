@@ -10,6 +10,22 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
+func AddDescriptorToSet(descriptors *descriptorpb.FileDescriptorSet, descriptor *descriptorpb.FileDescriptorProto) {
+	if descriptor.GetName() == "src/proto/grpc/reflection/v1alpha/reflection.proto" {
+		return
+	}
+	found := false
+	for _, file := range descriptors.File {
+		if file.GetName() == descriptor.GetName() {
+			found = true
+			break
+		}
+	}
+	if !found {
+		descriptors.File = append(descriptors.File, descriptor)
+	}
+}
+
 func main() {
 	conn, err := grpc.Dial("localhost:12345", grpc.WithInsecure())
 	if nil != err {
@@ -69,7 +85,7 @@ func main() {
 				descriptor := new(descriptorpb.FileDescriptorProto)
 				proto.Unmarshal(buffer, descriptor)
 				fmt.Println(descriptor.GetName())
-				descriptors.File = append(descriptors.File, descriptor)
+				AddDescriptorToSet(descriptors, descriptor)
 			}
 		}
 	}
