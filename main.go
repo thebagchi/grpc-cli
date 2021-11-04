@@ -91,4 +91,26 @@ func main() {
 	}
 	fmt.Println("=====================================================================================================")
 	fmt.Println(encoder.Format(descriptors))
+	files := make([]string, 0)
+	for _, descriptor := range descriptors.GetFile() {
+		files = append(files, descriptor.GetName())
+	}
+	if len(files) > 0 {
+		for _, file := range files {
+			request := &reflectpb.ServerReflectionRequest{
+				Host: "localhost:12345",
+				MessageRequest: &reflectpb.ServerReflectionRequest_FileByFilename{
+					FileByFilename: file,
+				},
+			}
+			err := stream.Send(request)
+			if nil != err {
+				fmt.Println("Error: ", err)
+				break
+			}
+			response, err := stream.Recv()
+			fmt.Println(encoder.Format(response))
+		}
+	}
+	fmt.Println("=====================================================================================================")
 }
