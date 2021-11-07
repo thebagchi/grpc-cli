@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"google.golang.org/grpc"
 	reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 func AddDescriptorToSet(descriptors *descriptorpb.FileDescriptorSet, descriptor *descriptorpb.FileDescriptorProto) {
@@ -26,6 +28,13 @@ func AddDescriptorToSet(descriptors *descriptorpb.FileDescriptorSet, descriptor 
 	if !found {
 		descriptors.File = append(descriptors.File, descriptor)
 	}
+}
+
+func FindFieldDescriptor(desc protoreflect.MessageDescriptor, name string) (protoreflect.FieldDescriptor, error) {
+	if fdesc := desc.Fields().ByName(protoreflect.Name(name)); fdesc != nil {
+		return fdesc, nil
+	}
+	return nil, fmt.Errorf("%s has no .%s field", desc.FullName(), name)
 }
 
 func main() {
@@ -134,5 +143,74 @@ func main() {
 		})
 		break
 	}
+	fmt.Println("=====================================================================================================")
+	// Populate Message
+	// Refer to https://github.com/thebagchi/grpc_async/blob/master/proto/rpc.proto
+	for {
+		var descriptor protoreflect.MessageDescriptor = nil
+		for _, msg := range messages {
+			if msg.FullName() == "rpc.SampleMessage" {
+				descriptor = msg
+				break
+			}
+		}
+		message := dynamicpb.NewMessage(descriptor)
+		// Set Members
+		{
+			fd, err := FindFieldDescriptor(descriptor, "string_value")
+			if nil != err {
+				fmt.Println("Error: ", err)
+				break
+			}
+			message.Set(fd, protoreflect.ValueOfString("Hello World!!!"))
+		}
+		{
+			fd, err := FindFieldDescriptor(descriptor, "integer_value")
+			if nil != err {
+				fmt.Println("Error: ", err)
+				break
+			}
+			message.Set(fd, protoreflect.ValueOfInt64(54321))
+		}
+		{
+			fd, err := FindFieldDescriptor(descriptor, "boolean_value")
+			if nil != err {
+				fmt.Println("Error: ", err)
+				break
+			}
+			message.Set(fd, protoreflect.ValueOfBool(false))
+		}
+		{
+			buffer, err := proto.Marshal(message)
+			if nil != err {
+				fmt.Println("Error: ", err)
+				break
+			}
+			fmt.Println(hex.Dump(buffer))
+		}
+		{
+			buffer, err := protojson.Marshal(message)
+			if nil != err {
+				fmt.Println("Error: ", err)
+				break
+			}
+			fmt.Println(string(buffer))
+		}
+		{
+			json := `
+{"stringValue":"Hello World!!!","integerValue":"54321","booleanValue":false}
+`
+			message := dynamicpb.NewMessage(descriptor)
+			err := protojson.Unmarshal([]byte(json), message)
+			if nil != err {
+				fmt.Println("Error: ", err)
+				break
+			}
+			fmt.Println(message)
+		}
+		break
+	}
+	fmt.Println("=====================================================================================================")
+	// Make GRPC Call
 	fmt.Println("=====================================================================================================")
 }
