@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
+	"strings"
 )
 
 func AddDescriptorToSet(descriptors *descriptorpb.FileDescriptorSet, descriptor *descriptorpb.FileDescriptorProto) {
@@ -35,6 +36,60 @@ func FindFieldDescriptor(desc protoreflect.MessageDescriptor, name string) (prot
 		return fdesc, nil
 	}
 	return nil, fmt.Errorf("%s has no .%s field", desc.FullName(), name)
+}
+
+func FindServiceDescriptor(desc protoreflect.FileDescriptor, name string) (protoreflect.ServiceDescriptor, error) {
+	if strings.HasPrefix(name, fmt.Sprintf("%s.", desc.Package())) {
+		name = strings.TrimPrefix(name, fmt.Sprintf("%s.", desc.Package()))
+		services := desc.Services()
+		if sdesc := services.ByName(protoreflect.Name(name)); sdesc != nil {
+			return sdesc, nil
+		}
+	}
+	return nil, fmt.Errorf("%s has no .%s field", desc.FullName(), name)
+}
+
+func MakeCall(conn *grpc.ClientConn, descriptors *descriptorpb.FileDescriptorSet, svc, rpc string, data string) (string, error) {
+	files, err := protodesc.NewFiles(descriptors)
+	if nil != err {
+		return "", nil
+	}
+	var (
+		service   protoreflect.ServiceDescriptor = nil
+		procedure protoreflect.MethodDescriptor  = nil
+		found     bool                           = false
+	)
+	files.RangeFiles(func(descriptor protoreflect.FileDescriptor) bool {
+		tmp, err := FindServiceDescriptor(descriptor, svc)
+		if nil == err {
+			service = tmp
+			found = true
+		}
+		return true
+	})
+	if !found {
+		return "", fmt.Errorf("service not found method: %s service: %s", rpc, svc)
+	}
+	procedure = service.Methods().ByName(protoreflect.Name(rpc))
+	if nil == procedure {
+		return "", fmt.Errorf("service not found method: %s service: %s", rpc, svc)
+	}
+	if nil == procedure.Input() || nil == procedure.Output() {
+		return "", fmt.Errorf("invalid service method: %s service: %s", rpc, svc)
+	}
+	var (
+		request  = dynamicpb.NewMessage(procedure.Input())
+		response = dynamicpb.NewMessage(procedure.Output())
+	)
+	err = conn.Invoke(context.Background(), fmt.Sprintf("/%s/%s", svc, rpc), request, response)
+	if nil != err {
+		return "", err
+	}
+	buffer, err := protojson.Marshal(response)
+	if nil != err {
+		return "", err
+	}
+	return string(buffer), nil
 }
 
 func main() {
@@ -212,5 +267,14 @@ func main() {
 	}
 	fmt.Println("=====================================================================================================")
 	// Make GRPC Call
+	for {
+		data, err := MakeCall(conn, descriptors, "rpc.SampleSvc", "RPC_1", "")
+		if nil != err {
+			fmt.Println("Error: ", err)
+			break
+		}
+		_ = data
+		break
+	}
 	fmt.Println("=====================================================================================================")
 }
