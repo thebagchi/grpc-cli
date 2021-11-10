@@ -81,6 +81,10 @@ func MakeCall(conn *grpc.ClientConn, descriptors *descriptorpb.FileDescriptorSet
 		request  = dynamicpb.NewMessage(procedure.Input())
 		response = dynamicpb.NewMessage(procedure.Output())
 	)
+	err = protojson.Unmarshal([]byte(data), request)
+	if nil != err {
+		return "", err
+	}
 	err = conn.Invoke(context.Background(), fmt.Sprintf("/%s/%s", svc, rpc), request, response)
 	if nil != err {
 		return "", err
@@ -268,12 +272,13 @@ func main() {
 	fmt.Println("=====================================================================================================")
 	// Make GRPC Call
 	for {
-		data, err := MakeCall(conn, descriptors, "rpc.SampleSvc", "RPC_1", "")
+		json := `{"name": "abra-ca-dabra"}`
+		data, err := MakeCall(conn, descriptors, "rpc.SampleSvc", "RPC_1", json)
 		if nil != err {
 			fmt.Println("Error: ", err)
 			break
 		}
-		_ = data
+		fmt.Println(data)
 		break
 	}
 	fmt.Println("=====================================================================================================")
