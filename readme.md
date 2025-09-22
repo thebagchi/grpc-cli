@@ -8,8 +8,6 @@ A command-line tool for interacting with gRPC services using server reflection o
 - **Proto File Support**: Use local proto files with custom import paths  
 - **List Methods**: Display all available gRPC methods
 - **Make gRPC Calls**: Execute RPC calls with JSON payloads
-- **Dynamic Message Handling**: Create and manipulate protobuf messages dynamically
-- **Service Discovery**: Retrieve service descriptors and file descriptors
 
 ## Building
 
@@ -25,14 +23,14 @@ go build -o grpc_cli.bin
 
 ### Command Line Options
 
-| Option | Type | Description | Default |
-|--------|------|-------------|---------|
-| `-h` | string | gRPC server host address (e.g: localhost:12345) | `localhost:12345` |
-| `-p` | string | Input proto file for the gRPC server, reflection will be used if omitted | *(empty - uses reflection)* |
-| `-i` | value | Include path(s) for compiling proto (can be specified multiple times) | *(none)* |
-| `-l` | bool | List available methods | `false` |
-| `-m` | string | Method name for RPC in format [package].[service].[rpc] | *(empty)* |
-| `-d` | string | JSON data used as input for RPC | *(empty)* |
+| Option | Type | Description |
+|--------|------|-------------|
+| `-h` | string | gRPC server host address (e.g: localhost:12345). Default: *(`localhost:12345`)* |
+| `-p` | string | Input proto file for the gRPC server, reflection will be used if omitted. Default: *(empty)* |
+| `-i` | value | Include path(s) for compiling proto (can be specified multiple times). Default: *(none)* |
+| `-l` | bool | List available methods. Default: *(false)*` |
+| `-m` | string | Method name for RPC in format [package].[service].[rpc]. Default: *(empty)* |
+| `-d` | string | JSON data used as input for RPC. Default: *(empty)* |
 
 ### Examples
 
