@@ -2,20 +2,43 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"strings"
 
-	"github.com/golang/protobuf/proto"
+	"github.com/bufbuild/protocompile"
+	"github.com/bufbuild/protocompile/linker"
+	"github.com/bufbuild/protocompile/protoutil"
+
 	"google.golang.org/grpc"
-	reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
+	"google.golang.org/grpc/credentials/insecure"
+	reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
+
+type ListString struct {
+	items []string
+}
+
+func (m *ListString) String() string {
+	return strings.Join(m.items, ",")
+}
+
+func (m *ListString) Set(v string) error {
+	m.items = append(m.items, v)
+	return nil
+}
+
+func MakeLS() *ListString {
+	return &ListString{
+		items: make([]string, 0),
+	}
+}
 
 func AddDescriptorToSet(descriptors *descriptorpb.FileDescriptorSet, descriptor *descriptorpb.FileDescriptorProto) {
 	if descriptor.GetName() == "src/proto/grpc/reflection/v1alpha/reflection.proto" {
@@ -98,44 +121,49 @@ func MakeCall(conn *grpc.ClientConn, descriptors *descriptorpb.FileDescriptorSet
 	return string(buffer), nil
 }
 
-func compileProto(path string) {
-
+func makeFD(file linker.File) []*descriptorpb.FileDescriptorProto {
+	var (
+		descs = make([]*descriptorpb.FileDescriptorProto, 0)
+		desc  = protoutil.ProtoFromFileDescriptor(file)
+	)
+	for _, depends := range desc.Dependency {
+		temp := makeFD(file.FindImportByPath(depends))
+		descs = append(descs, temp...)
+	}
+	descs = append(descs, desc)
+	return descs
 }
 
-func main() {
-	// Define command line flags
-	var (
-		host = flag.String("host", "localhost:12345", "gRPC server host address (e.g., localhost:12345)")
-		pb   = flag.String("proto", "", "proto file used by gRPC server, if provided will be used else reflection is used")
-		// list = flag.Bool("list", false, "list available services")
-	)
-	flag.Parse()
-
-	if len(*pb) != 0 {
-		compileProto(*pb)
+func compileProto(path string, imports []string) *descriptorpb.FileDescriptorSet {
+	compiler := &protocompile.Compiler{
+		Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
+			ImportPaths: imports,
+		}),
 	}
-
-	conn, err := grpc.Dial(*host, grpc.WithInsecure())
+	fdescs := new(descriptorpb.FileDescriptorSet)
+	files, err := compiler.Compile(context.Background(), path)
 	if nil != err {
 		fmt.Println("Error: ", err)
-		return
+		return nil
 	}
+	fdescs.File = makeFD(files.FindFileByPath(path))
+	if len(fdescs.File) > 0 {
+		return fdescs
+	}
+	return nil
+}
+
+func loadReflection(conn *grpc.ClientConn, host string) *descriptorpb.FileDescriptorSet {
 	client := reflectpb.NewServerReflectionClient(conn)
 	stream, err := client.ServerReflectionInfo(context.Background())
 	if nil != err {
 		fmt.Println("Error: ", err)
-		return
+		return nil
 	}
-
-	encoder := protojson.MarshalOptions{
-		Indent: "    ",
-	}
-	fmt.Println("=====================================================================================================")
-	// List Services ...
 	services := make([]string, 0)
 	for {
 		request := &reflectpb.ServerReflectionRequest{
-			Host:           *host,
+			Host:           host,
 			MessageRequest: new(reflectpb.ServerReflectionRequest_ListServices),
 		}
 		err := stream.Send(request)
@@ -148,20 +176,17 @@ func main() {
 			fmt.Println("Error: ", err)
 			break
 		}
-		fmt.Println(encoder.Format(response))
 		svcs := response.GetListServicesResponse()
 		for _, service := range svcs.GetService() {
 			services = append(services, service.Name)
 		}
 		break
 	}
-	fmt.Println("=====================================================================================================")
-	descriptors := new(descriptorpb.FileDescriptorSet)
-	// Prepare FileDescriptorSet ...
 	if len(services) > 0 {
+		fdescs := new(descriptorpb.FileDescriptorSet)
 		for _, service := range services {
 			request := &reflectpb.ServerReflectionRequest{
-				Host: *host,
+				Host: host,
 				MessageRequest: &reflectpb.ServerReflectionRequest_FileContainingSymbol{
 					FileContainingSymbol: service,
 				},
@@ -175,133 +200,101 @@ func main() {
 			if nil != err {
 				fmt.Println("Error: ", err)
 			}
-			fmt.Println(encoder.Format(response))
 			decs := response.GetFileDescriptorResponse()
 			for _, buffer := range decs.GetFileDescriptorProto() {
 				descriptor := new(descriptorpb.FileDescriptorProto)
 				proto.Unmarshal(buffer, descriptor)
-				fmt.Println(descriptor.GetName())
-				AddDescriptorToSet(descriptors, descriptor)
+				AddDescriptorToSet(fdescs, descriptor)
 			}
 		}
-	}
-	fmt.Println("=====================================================================================================")
-	fmt.Println(encoder.Format(descriptors))
-	files := make([]string, 0)
-	// Prepare List Of Files ...
-	for _, descriptor := range descriptors.GetFile() {
-		files = append(files, descriptor.GetName())
-	}
-	if len(files) > 0 {
-		for _, file := range files {
-			request := &reflectpb.ServerReflectionRequest{
-				Host: *host,
-				MessageRequest: &reflectpb.ServerReflectionRequest_FileByFilename{
-					FileByFilename: file,
-				},
-			}
-			err := stream.Send(request)
-			if nil != err {
-				fmt.Println("Error: ", err)
-				break
-			}
-			response, err := stream.Recv()
-			if nil != err {
-				fmt.Println("Error: ", err)
-			}
-			fmt.Println(encoder.Format(response))
+		if len(fdescs.File) > 0 {
+			return fdescs
 		}
+		return fdescs
 	}
-	fmt.Println("=====================================================================================================")
-	// List Messages ...
-	messages := make([]protoreflect.MessageDescriptor, 0)
+	return nil
+}
+
+func listMethods(fdescs *descriptorpb.FileDescriptorSet) {
+	methods := make([]string, 0)
 	for {
-		files, err := protodesc.NewFiles(descriptors)
+		files, err := protodesc.NewFiles(fdescs)
 		if nil != err {
 			fmt.Println("Error: ", err)
 			break
 		}
 		files.RangeFiles(func(descriptor protoreflect.FileDescriptor) bool {
-			for i := 0; i < descriptor.Messages().Len(); i++ {
-				descriptor := descriptor.Messages().Get(i)
-				messages = append(messages, descriptor)
+			services := descriptor.Services()
+			for i := 0; i < services.Len(); i++ {
+				service := services.Get(i)
+				if !strings.HasPrefix(string(service.FullName()), "grpc.reflection") {
+					for j := 0; j < service.Methods().Len(); j++ {
+						methods = append(methods, string(service.Methods().Get(j).FullName()))
+					}
+				}
 			}
 			return true
 		})
 		break
 	}
-	fmt.Println("=====================================================================================================")
-	// Populate Message
-	// Refer to https://github.com/thebagchi/grpc_async/blob/master/proto/rpc.proto
-	for {
-		var descriptor protoreflect.MessageDescriptor = nil
-		for _, msg := range messages {
-			if msg.FullName() == "rpc.SampleMessage" {
-				descriptor = msg
-				break
-			}
-		}
-		message := dynamicpb.NewMessage(descriptor)
-		// Set Members
-		{
-			fd, err := FindFieldDescriptor(descriptor, "string_value")
-			if nil != err {
-				fmt.Println("Error: ", err)
-				break
-			}
-			message.Set(fd, protoreflect.ValueOfString("Hello World!!!"))
-		}
-		{
-			fd, err := FindFieldDescriptor(descriptor, "integer_value")
-			if nil != err {
-				fmt.Println("Error: ", err)
-				break
-			}
-			message.Set(fd, protoreflect.ValueOfInt64(54321))
-		}
-		{
-			fd, err := FindFieldDescriptor(descriptor, "boolean_value")
-			if nil != err {
-				fmt.Println("Error: ", err)
-				break
-			}
-			message.Set(fd, protoreflect.ValueOfBool(false))
-		}
-		{
-			buffer, err := proto.Marshal(message)
-			if nil != err {
-				fmt.Println("Error: ", err)
-				break
-			}
-			fmt.Println(hex.Dump(buffer))
-		}
-		{
-			buffer, err := protojson.Marshal(message)
-			if nil != err {
-				fmt.Println("Error: ", err)
-				break
-			}
-			fmt.Println(string(buffer))
-		}
-		{
-			json := `
-{"stringValue":"Hello World!!!","integerValue":"54321","booleanValue":false}
-`
-			message := dynamicpb.NewMessage(descriptor)
-			err := protojson.Unmarshal([]byte(json), message)
-			if nil != err {
-				fmt.Println("Error: ", err)
-				break
-			}
-			fmt.Println(message)
-		}
-		break
+	for _, method := range methods {
+		fmt.Println(" = ", method)
 	}
-	fmt.Println("=====================================================================================================")
-	// Make GRPC Call
+}
+
+func main() {
+	var (
+		host                                          = "localhost:12345"
+		protobuf                                      = ""
+		methods                                       = false
+		method                                        = ""
+		data                                          = ""
+		imports                                       = MakeLS()
+		fdescs        *descriptorpb.FileDescriptorSet = nil
+		useReflection                                 = false
+	)
+
+	flag.StringVar(&host, "h", "localhost:12345", "grpc server host address (e.g: localhost:12345)")
+	flag.StringVar(&protobuf, "p", "", "input proto file for the grpc server, reflection will be used if omitted")
+	flag.BoolVar(&methods, "l", false, "list methods")
+	flag.StringVar(&method, "m", "", "method name for rpc [package].[service].[rpc]")
+	flag.StringVar(&data, "d", "", "json data used as input for rpc")
+	flag.Var(imports, "i", "include path(s) for compiling proto")
+	flag.Parse()
+
+	if len(protobuf) != 0 {
+		fdescs = compileProto(protobuf, imports.items)
+	}
+	if nil == fdescs {
+		useReflection = true
+	}
+	conn, err := grpc.NewClient(host, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if nil != err {
+		fmt.Println("Error: ", err)
+		return
+	}
+	if useReflection {
+		fdescs = loadReflection(conn, host)
+	}
+	if nil == fdescs {
+		fmt.Println("Error: cannot continue unable to load file descriptors")
+		return
+	}
+	if methods {
+		listMethods(fdescs)
+		return
+	}
 	for {
-		json := `{"name": "abra-ca-dabra"}`
-		data, err := MakeCall(conn, descriptors, "rpc.SampleSvc", "RPC_1", json)
+		items := strings.Split(method, ".")
+		if len(items) < 3 {
+			fmt.Println("Error: invalid method name want [package].[service].[rpc] (e.g: grpc.reflection.v1.ServerReflection.ServerReflectionInfo)")
+			break
+		}
+		var (
+			service   = strings.Join(items[:len(items)-1], ".")
+			procedure = items[len(items)-1]
+		)
+		data, err := MakeCall(conn, fdescs, service, procedure, data)
 		if nil != err {
 			fmt.Println("Error: ", err)
 			break
@@ -309,5 +302,4 @@ func main() {
 		fmt.Println(data)
 		break
 	}
-	fmt.Println("=====================================================================================================")
 }

@@ -9,8 +9,6 @@ import (
 	_ "google.golang.org/protobuf/cmd/protoc-gen-go"
 )
 
-// Run this for checking if there are upgrades ...
+// Check for upgrades and do upgrade ...
 //go:generate go list -u -m all
-
-// Run this for upgrading all dependencies ...
 //go get -u all
