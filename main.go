@@ -3,16 +3,18 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"flag"
 	"fmt"
+	"strings"
+
+	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
 	reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1alpha"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
-	"strings"
 )
 
 func AddDescriptorToSet(descriptors *descriptorpb.FileDescriptorSet, descriptor *descriptorpb.FileDescriptorProto) {
@@ -96,8 +98,24 @@ func MakeCall(conn *grpc.ClientConn, descriptors *descriptorpb.FileDescriptorSet
 	return string(buffer), nil
 }
 
+func compileProto(path string) {
+
+}
+
 func main() {
-	conn, err := grpc.Dial("localhost:12345", grpc.WithInsecure())
+	// Define command line flags
+	var (
+		host = flag.String("host", "localhost:12345", "gRPC server host address (e.g., localhost:12345)")
+		pb   = flag.String("proto", "", "proto file used by gRPC server, if provided will be used else reflection is used")
+		// list = flag.Bool("list", false, "list available services")
+	)
+	flag.Parse()
+
+	if len(*pb) != 0 {
+		compileProto(*pb)
+	}
+
+	conn, err := grpc.Dial(*host, grpc.WithInsecure())
 	if nil != err {
 		fmt.Println("Error: ", err)
 		return
@@ -117,7 +135,7 @@ func main() {
 	services := make([]string, 0)
 	for {
 		request := &reflectpb.ServerReflectionRequest{
-			Host:           "localhost:12345",
+			Host:           *host,
 			MessageRequest: new(reflectpb.ServerReflectionRequest_ListServices),
 		}
 		err := stream.Send(request)
@@ -126,6 +144,10 @@ func main() {
 			break
 		}
 		response, err := stream.Recv()
+		if nil != err {
+			fmt.Println("Error: ", err)
+			break
+		}
 		fmt.Println(encoder.Format(response))
 		svcs := response.GetListServicesResponse()
 		for _, service := range svcs.GetService() {
@@ -139,7 +161,7 @@ func main() {
 	if len(services) > 0 {
 		for _, service := range services {
 			request := &reflectpb.ServerReflectionRequest{
-				Host: "localhost:12345",
+				Host: *host,
 				MessageRequest: &reflectpb.ServerReflectionRequest_FileContainingSymbol{
 					FileContainingSymbol: service,
 				},
@@ -150,6 +172,9 @@ func main() {
 				break
 			}
 			response, err := stream.Recv()
+			if nil != err {
+				fmt.Println("Error: ", err)
+			}
 			fmt.Println(encoder.Format(response))
 			decs := response.GetFileDescriptorResponse()
 			for _, buffer := range decs.GetFileDescriptorProto() {
@@ -170,7 +195,7 @@ func main() {
 	if len(files) > 0 {
 		for _, file := range files {
 			request := &reflectpb.ServerReflectionRequest{
-				Host: "localhost:12345",
+				Host: *host,
 				MessageRequest: &reflectpb.ServerReflectionRequest_FileByFilename{
 					FileByFilename: file,
 				},
@@ -181,6 +206,9 @@ func main() {
 				break
 			}
 			response, err := stream.Recv()
+			if nil != err {
+				fmt.Println("Error: ", err)
+			}
 			fmt.Println(encoder.Format(response))
 		}
 	}
