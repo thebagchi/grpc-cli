@@ -25,12 +25,12 @@ go build -o grpc_cli.bin
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `-h` | string | gRPC server host address (e.g: localhost:12345). Default: *(localhost:12345)* |
-| `-p` | string | Input proto file for the gRPC server, reflection will be used if omitted. Default: *(empty)* |
-| `-i` | value | Include path(s) for compiling proto (can be specified multiple times). Default: *(none)* |
-| `-l` | bool | List available methods. Default: *(false)* |
-| `-m` | string | Method name for RPC in format [package].[service].[rpc]. Default: *(empty)* |
-| `-d` | string | JSON data used as input for RPC. Default: *(empty)* |
+| `-h` | string | gRPC server host address (e.g: localhost:12345)<br>Default: `localhost:12345` |
+| `-p` | string | Input proto file for the gRPC server, reflection will be used if omitted<br>Default: *(empty)* |
+| `-i` | value | Include path(s) for compiling proto (can be specified multiple times)<br>Default: *(none)* |
+| `-l` | bool | List available methods<br>Default: `false` |
+| `-m` | string | Method name for RPC in format [package].[service].[rpc]<br>Default: *(empty)* |
+| `-d` | string | JSON data used as input for RPC<br>Default: *(empty)* |
 
 ### Examples
 
